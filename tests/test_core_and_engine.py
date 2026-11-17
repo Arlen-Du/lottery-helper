@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import csv
 import os
 import tempfile
 import unittest
 from pathlib import Path
-
-import pandas as pd
 
 from src.analysis.engine import AnalysisEngine
 from src.core.models import DrawRecord, PurchaseRecord
@@ -70,13 +69,11 @@ class LotteryHelperTests(unittest.TestCase):
             storage = SQLiteStorage(db_path)
 
             csv_path = Path(tmpdir) / "ssq.csv"
-            df = pd.DataFrame(
-                [
-                    {"期号": "2026001", "开奖日期": "2026-01-01", "红球": "01,05,12,18,24,33", "蓝球": "08"},
-                    {"期号": "2026002", "开奖日期": "2026-01-04", "红球": "02,09,14,20,27,31", "蓝球": "12"},
-                ]
-            )
-            df.to_csv(csv_path, index=False)
+            with csv_path.open("w", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=["期号", "开奖日期", "红球", "蓝球"])
+                writer.writeheader()
+                writer.writerow({"期号": "2026001", "开奖日期": "2026-01-01", "红球": "01,05,12,18,24,33", "蓝球": "08"})
+                writer.writerow({"期号": "2026002", "开奖日期": "2026-01-04", "红球": "02,09,14,20,27,31", "蓝球": "12"})
 
             records = CsvExcelAdapter(csv_path).fetch("ssq")
             self.assertEqual(len(records), 2)

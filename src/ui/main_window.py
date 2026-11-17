@@ -491,10 +491,6 @@ class LotteryMainWindow(QMainWindow):
         btn_copy_img.setObjectName("SecondaryBtn")
         btn_copy_img.clicked.connect(self._on_copy_tickets_image)
         cfg_layout.addWidget(btn_copy_img)
-
-        btn_buy_rec = QPushButton("模拟购买推荐")
-        btn_buy_rec.clicked.connect(self._on_buy_recommended)
-        cfg_layout.addWidget(btn_buy_rec)
         cfg_layout.addStretch()
 
         layout.addWidget(cfg_grp)
@@ -907,6 +903,13 @@ class LotteryMainWindow(QMainWindow):
             row_layout.addWidget(info_lbl)
             row_layout.addStretch()
 
+            btn_buy_row = QPushButton("模拟购买")
+            btn_buy_row.setObjectName("SecondaryBtn")
+            btn_buy_row.clicked.connect(
+                lambda _checked=False, nums=tk_obj.numbers: self._save_simulated_purchases([nums])
+            )
+            row_layout.addWidget(btn_buy_row)
+
             self.tickets_layout.addWidget(row_widget)
 
     @staticmethod
@@ -1125,12 +1128,6 @@ class LotteryMainWindow(QMainWindow):
                 f"已记录 {len(records)} 注（目标期号 {target_issue}，花费 ¥{cost * len(records)}）。\n"
                 "下次开奖后，在「数据中心」同步或导入最新开奖数据即可自动计算是否中奖及奖金数额。",
             )
-
-    def _on_buy_recommended(self) -> None:
-        if not self.last_tickets:
-            QMessageBox.information(self, "无推荐号码", "请先点击「生成推荐号码」。")
-            return
-        self._save_simulated_purchases([t.numbers for t in self.last_tickets])
 
     def _on_buy_manual(self) -> None:
         raw = self.manual_input_edit.text().strip()

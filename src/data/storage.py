@@ -14,8 +14,11 @@ from src.core.models import DrawRecord, PurchaseRecord
 class SQLiteStorage:
     """Thread-safe SQLite storage for DrawRecord objects."""
 
-    def __init__(self, db_path: str | Path = "data/lottery.db") -> None:
-        self.db_path = Path(db_path)
+    def __init__(self, db_path: Optional[str | Path] = None) -> None:
+        if db_path is None:
+            self.db_path = Path.home() / ".lottery-helper" / "lottery.db"
+        else:
+            self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._init_db()

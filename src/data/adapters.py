@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import random
 import re
 from abc import ABC, abstractmethod
@@ -9,7 +10,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
-import pandas as pd
+import openpyxl
 import requests
 
 from src.core.models import DrawRecord
@@ -220,15 +221,14 @@ class CsvExcelAdapter(BaseDataAdapter):
 
         rule = get_lottery_rule(lottery_code)
         try:
-            if self.file_path.suffix.lower() in {".xlsx", ".xls"}:
-                df = pd.read_excel(self.file_path, dtype=str)
-            else:
-                df = pd.read_csv(self.file_path, dtype=str)
+            rows = self._read_rows(self.file_path)
         except Exception as exc:
             raise DataAdapterError(f"读取文件失败: {exc}") from exc
 
-        df = df.fillna("")
-        col_map = {c.strip().lower(): c for c in df.columns}
+        if not rows:
+            return []
+
+        col_map = {c.strip().lower(): c for c in rows[0].keys() if c}
 
         def _pick_col(candidates: List[str]) -> Optional[str]:
             for cand in candidates:
@@ -242,11 +242,11 @@ class CsvExcelAdapter(BaseDataAdapter):
             raise DataAdapterError("文件中缺少期号列（支持列名: issue / 期号）")
 
         records: List[DrawRecord] = []
-        for _, row in df.iterrows():
-            issue = str(row[issue_col]).strip()
+        for row in rows:
+            issue = str(row.get(issue_col, "")).strip()
             if not issue:
                 continue
-            draw_date = str(row[date_col]).strip()[:10] if date_col else ""
+            draw_date = str(row.get(date_col, "")).strip()[:10] if date_col else ""
             numbers = self._extract_numbers(lottery_code, row, _pick_col)
             rule.validate_numbers(numbers)
             records.append(
@@ -262,7 +262,32 @@ class CsvExcelAdapter(BaseDataAdapter):
         return records
 
     @staticmethod
-    def _extract_numbers(lottery_code: str, row: pd.Series, pick_col) -> Dict[str, List[int]]:
+    def _read_rows(file_path: Path) -> List[Dict[str, str]]:
+        if file_path.suffix.lower() in {".xlsx", ".xls"}:
+            wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+            try:
+                ws = wb.active
+                it = ws.iter_rows(values_only=True)
+                headers = [str(h).strip() if h is not None else "" for h in next(it, ())]
+                rows: List[Dict[str, str]] = []
+                for vals in it:
+                    rows.append(
+                        {
+                            headers[i]: ("" if i >= len(vals) or vals[i] is None else str(vals[i]))
+                            for i in range(len(headers))
+                            if headers[i]
+                        }
+                    )
+                return rows
+            finally:
+                wb.close()
+
+        with file_path.open("r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            return [{k: (v or "") for k, v in row.items() if k is not None} for row in reader]
+
+    @staticmethod
+    def _extract_numbers(lottery_code: str, row: Dict[str, str], pick_col) -> Dict[str, List[int]]:
         if lottery_code == "ssq":
             r_col = pick_col(["red", "红球", "前区"])
             b_col = pick_col(["blue", "蓝球", "后区"])
