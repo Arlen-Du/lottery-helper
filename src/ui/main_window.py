@@ -7,7 +7,7 @@ import sys
 from typing import Dict, List, Optional
 
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen
+from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -444,11 +444,18 @@ class LotteryMainWindow(QMainWindow):
         cfg_layout.addWidget(QLabel("选号策略:"))
         self.strategy_combo = QComboBox()
         self.strategy_combo.addItems([s.value for s in StrategyType])
-        self.strategy_combo.setMinimumWidth(180)
+        self.strategy_combo.setMinimumWidth(165)
         cfg_layout.addWidget(self.strategy_combo)
 
-        cfg_layout.addSpacing(10)
-        cfg_layout.addWidget(QLabel("生成注数:"))
+        cfg_layout.addSpacing(8)
+        cfg_layout.addWidget(QLabel("推荐模式:"))
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["确定性 Top-N 排序", "加权随机采样"])
+        self.mode_combo.setMinimumWidth(145)
+        cfg_layout.addWidget(self.mode_combo)
+
+        cfg_layout.addSpacing(8)
+        cfg_layout.addWidget(QLabel("注数:"))
         self.gen_count_spin = QSpinBox()
         self.gen_count_spin.setRange(1, 20)
         self.gen_count_spin.setValue(5)
@@ -471,10 +478,15 @@ class LotteryMainWindow(QMainWindow):
         btn_gen.clicked.connect(self._on_generate_tickets)
         cfg_layout.addWidget(btn_gen)
 
-        btn_copy = QPushButton("复制结果")
-        btn_copy.setObjectName("SecondaryBtn")
-        btn_copy.clicked.connect(self._on_copy_tickets)
-        cfg_layout.addWidget(btn_copy)
+        btn_copy_text = QPushButton("复制文字")
+        btn_copy_text.setObjectName("SecondaryBtn")
+        btn_copy_text.clicked.connect(self._on_copy_tickets_text)
+        cfg_layout.addWidget(btn_copy_text)
+
+        btn_copy_img = QPushButton("复制图片")
+        btn_copy_img.setObjectName("SecondaryBtn")
+        btn_copy_img.clicked.connect(self._on_copy_tickets_image)
+        cfg_layout.addWidget(btn_copy_img)
         cfg_layout.addStretch()
 
         layout.addWidget(cfg_grp)
@@ -749,6 +761,7 @@ class LotteryMainWindow(QMainWindow):
             sum_max=int(s_max) if s_max.isdigit() else None,
         )
 
+        is_deterministic = self.mode_combo.currentText() == "确定性 Top-N 排序"
         try:
             tickets = self.generator.generate(
                 rule=self.current_rule,
@@ -757,6 +770,7 @@ class LotteryMainWindow(QMainWindow):
                 count=count,
                 window=self._get_window_size(),
                 filter_cfg=filter_cfg,
+                deterministic=is_deterministic,
             )
         except Exception as exc:
             QMessageBox.critical(self, "生成失败", str(exc))
@@ -770,7 +784,8 @@ class LotteryMainWindow(QMainWindow):
 
         self.last_tickets = tickets
         self._render_tickets(tickets)
-        self.status_lbl.setText(f"已使用「{strategy.value}」生成 {len(tickets)} 注推荐号码。")
+        mode_tag = "确定性 Top-N 排序" if is_deterministic else "加权随机采样"
+        self.status_lbl.setText(f"已使用「{strategy.value} · {mode_tag}」生成 {len(tickets)} 注推荐号码。")
 
     def _render_tickets(self, tickets: List[Ticket]) -> None:
         while self.tickets_layout.count():
@@ -789,7 +804,7 @@ class LotteryMainWindow(QMainWindow):
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(6, 4, 6, 4)
 
-            idx_lbl = QLabel(f"第 {idx:02d} 注")
+            idx_lbl = QLabel(f"Top {idx:02d}")
             idx_lbl.setFixedWidth(56)
             idx_lbl.setStyleSheet("font-weight: bold; color: #333333;")
             row_layout.addWidget(idx_lbl)
@@ -806,22 +821,86 @@ class LotteryMainWindow(QMainWindow):
                     row_layout.addWidget(ball)
                 row_layout.addSpacing(8)
 
-            info_lbl = QLabel(f"契合度 {tk_obj.score:.1f}  |  {tk_obj.pattern_summary}")
+            info_lbl = QLabel(f"概率评分 {tk_obj.score:.1f}  |  {tk_obj.pattern_summary}")
             info_lbl.setStyleSheet("color: #555555;")
             row_layout.addWidget(info_lbl)
             row_layout.addStretch()
 
             self.tickets_layout.addWidget(row_widget)
 
-    def _on_copy_tickets(self) -> None:
+    @staticmethod
+    def format_tickets_text(rule: LotteryRule, tickets: List[Ticket]) -> str:
+        """Format tickets as plain text containing only zone colors/labels and ball numbers."""
+        lines: List[str] = []
+        for tk_obj in tickets:
+            parts = [
+                f"{z.label}: {' '.join(z.format_num(n) for n in tk_obj.numbers[z.key])}"
+                for z in rule.zones
+            ]
+            lines.append(" | ".join(parts))
+        return "\n".join(lines)
+
+    @staticmethod
+    def render_tickets_image(rule: LotteryRule, tickets: List[Ticket]) -> QImage:
+        """Render tickets as an image containing only colored balls and their numbers."""
+        ball_d = 38
+        ball_gap = 10
+        zone_gap = 16
+        pad_x = 20
+        pad_y = 18
+        row_gap = 14
+
+        total_balls = sum(z.count for z in rule.zones)
+        total_zone_gaps = max(len(rule.zones) - 1, 0)
+        img_w = pad_x * 2 + total_balls * ball_d + max(total_balls - 1, 0) * ball_gap + total_zone_gaps * zone_gap
+        img_h = pad_y * 2 + len(tickets) * ball_d + max(len(tickets) - 1, 0) * row_gap
+
+        scale = 2  # HiDPI crisp rendering
+        image = QImage(img_w * scale, img_h * scale, QImage.Format.Format_ARGB32)
+        image.setDevicePixelRatio(scale)
+        image.fill(QColor("#FFFFFF"))
+
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setFont(QFont("Menlo", 13, QFont.Weight.Bold))
+
+        y = pad_y
+        for tk_obj in tickets:
+            x = pad_x
+            for z_idx, z in enumerate(rule.zones):
+                ball_color = QColor(z.color)
+                for num in tk_obj.numbers[z.key]:
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(ball_color)
+                    painter.drawEllipse(x, y, ball_d, ball_d)
+
+                    painter.setPen(QColor("#FFFFFF"))
+                    painter.drawText(
+                        x, y, ball_d, ball_d, Qt.AlignmentFlag.AlignCenter, z.format_num(num)
+                    )
+                    x += ball_d + ball_gap
+                if z_idx < len(rule.zones) - 1:
+                    x += zone_gap
+            y += ball_d + row_gap
+
+        painter.end()
+        return image
+
+    def _on_copy_tickets_text(self) -> None:
         if not self.last_tickets:
+            QMessageBox.information(self, "无内容", "请先生成推荐号码。")
             return
-        lines = [
-            f"{idx}. {t.format_display(self.current_rule)} ({t.pattern_summary})"
-            for idx, t in enumerate(self.last_tickets, start=1)
-        ]
-        QApplication.clipboard().setText("\n".join(lines))
-        self.status_lbl.setText("已复制推荐号码到剪贴板。")
+        text = self.format_tickets_text(self.current_rule, self.last_tickets)
+        QApplication.clipboard().setText(text)
+        self.status_lbl.setText("已复制推荐号码（纯文字）到剪贴板。")
+
+    def _on_copy_tickets_image(self) -> None:
+        if not self.last_tickets:
+            QMessageBox.information(self, "无内容", "请先生成推荐号码。")
+            return
+        image = self.render_tickets_image(self.current_rule, self.last_tickets)
+        QApplication.clipboard().setImage(image)
+        self.status_lbl.setText("已复制推荐号码（彩球图片）到剪贴板。")
 
     def _on_evaluate_manual(self) -> None:
         raw = self.manual_input_edit.text().strip()

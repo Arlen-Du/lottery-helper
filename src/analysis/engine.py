@@ -206,31 +206,67 @@ class AnalysisEngine:
             "consecutive_dist": {k: round(v / n * 100, 1) for k, v in sorted(consec_counter.items())},
         }
 
-    def evaluate_ticket(
+    def build_eval_context(
         self,
         draws: List[DrawRecord],
         rule: LotteryRule,
-        numbers: Dict[str, List[int]],
         window: Optional[int] = 100,
     ) -> Dict[str, Any]:
-        """Evaluate a candidate ticket against historical pattern & number statistics."""
-        rule.validate_numbers(numbers)
+        """Precompute statistics and pattern counters for fast batch ticket evaluation."""
         sample = self._slice_window(draws, window)
         stats_by_zone = self.analyze_all_zones(sample, rule, window=None)
+        stat_maps = {
+            z_key: {s.number: s for s in stat_list}
+            for z_key, stat_list in stats_by_zone.items()
+        }
+        oe_counter: Counter[str] = Counter()
+        sz_counter: Counter[str] = Counter()
+        sums: List[int] = []
+        for d in sample:
+            d_nums, d_mid = self._extract_primary_numbers(rule, d.numbers)
+            d_feat = self._compute_pattern_features(d_nums, d_mid)
+            oe_counter[d_feat["odd_even"]] += 1
+            sz_counter[d_feat["size_ratio"]] += 1
+            sums.append(d_feat["sum"])
 
-        # Average number composite score
+        sums_sorted = sorted(sums)
+        n = len(sums_sorted)
+        p25 = sums_sorted[max(0, int(n * 0.25) - 1)] if n else 0
+        p75 = sums_sorted[min(n - 1, int(n * 0.75))] if n else 0
+
+        return {
+            "total": n,
+            "stats_by_zone": stats_by_zone,
+            "stat_maps": stat_maps,
+            "oe_counter": oe_counter,
+            "sz_counter": sz_counter,
+            "sums": sums_sorted,
+            "sum_p25": p25,
+            "sum_p75": p75,
+        }
+
+    def evaluate_with_context(
+        self,
+        ctx: Dict[str, Any],
+        rule: LotteryRule,
+        numbers: Dict[str, List[int]],
+    ) -> Dict[str, Any]:
+        """Evaluate a candidate ticket using a precomputed evaluation context."""
+        rule.validate_numbers(numbers)
+        stat_maps = ctx["stat_maps"]
         num_scores: List[float] = []
         for zone in rule.zones:
-            stat_map = {s.number: s for s in stats_by_zone[zone.key]}
+            s_map = stat_maps.get(zone.key, {})
             for num in numbers[zone.key]:
-                if num in stat_map:
-                    num_scores.append(stat_map[num].score)
+                if num in s_map:
+                    num_scores.append(s_map[num].score)
         avg_num_score = round(sum(num_scores) / max(len(num_scores), 1), 1)
 
         nums, midpoint = self._extract_primary_numbers(rule, numbers)
         feat = self._compute_pattern_features(nums, midpoint)
+        total = ctx["total"]
 
-        if not sample:
+        if total == 0:
             return {
                 "features": feat,
                 "avg_num_score": avg_num_score,
@@ -241,37 +277,21 @@ class AnalysisEngine:
                 "diagnostics": ["暂无历史数据，仅完成号码规则校验。"],
             }
 
-        patterns = self.analyze_patterns(sample, rule, window=None)
-        total = patterns["total"]
-
-        # Historical hit rate of exact odd/even & size ratios
-        oe_hits = sum(cnt for k, cnt, _ in patterns["odd_even_top"] if k == feat["odd_even"])
-        # Re-count accurately in case it wasn't in top 4
-        oe_exact = 0
-        sz_exact = 0
+        oe_exact = ctx["oe_counter"].get(feat["odd_even"], 0)
+        sz_exact = ctx["sz_counter"].get(feat["size_ratio"], 0)
         sum_tol = 3 if rule.code == "fc3d" else 12
-        sum_near = 0
-        for d in sample:
-            d_nums, d_mid = self._extract_primary_numbers(rule, d.numbers)
-            d_feat = self._compute_pattern_features(d_nums, d_mid)
-            if d_feat["odd_even"] == feat["odd_even"]:
-                oe_exact += 1
-            if d_feat["size_ratio"] == feat["size_ratio"]:
-                sz_exact += 1
-            if abs(d_feat["sum"] - feat["sum"]) <= sum_tol:
-                sum_near += 1
+        target_sum = feat["sum"]
+        sum_near = sum(1 for s in ctx["sums"] if abs(s - target_sum) <= sum_tol)
 
-        _ = oe_hits
         oe_rate = round(oe_exact / total * 100, 1)
         sz_rate = round(sz_exact / total * 100, 1)
         sum_rate = round(sum_near / total * 100, 1)
 
-        # Overall empirical fit (0 - 100)
         pattern_score = min(100.0, (oe_rate * 1.4 + sz_rate * 1.4 + sum_rate * 0.8) / 1.5)
         overall_fit = round(0.45 * avg_num_score + 0.55 * pattern_score, 1)
 
         diagnostics: List[str] = []
-        p25, p75 = patterns["sum_p25"], patterns["sum_p75"]
+        p25, p75 = ctx["sum_p25"], ctx["sum_p75"]
         if p25 <= feat["sum"] <= p75:
             diagnostics.append(f"和值 {feat['sum']} 处于历史核心高频区间 [{p25}, {p75}]。")
         else:
@@ -296,3 +316,14 @@ class AnalysisEngine:
             "overall_fit": overall_fit,
             "diagnostics": diagnostics,
         }
+
+    def evaluate_ticket(
+        self,
+        draws: List[DrawRecord],
+        rule: LotteryRule,
+        numbers: Dict[str, List[int]],
+        window: Optional[int] = 100,
+    ) -> Dict[str, Any]:
+        """Evaluate a candidate ticket against historical pattern & number statistics."""
+        ctx = self.build_eval_context(draws, rule, window=window)
+        return self.evaluate_with_context(ctx, rule, numbers)

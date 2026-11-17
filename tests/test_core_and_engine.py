@@ -43,8 +43,22 @@ class LotteryHelperTests(unittest.TestCase):
                 strategy=StrategyType.COMPOSITE,
                 count=5,
                 window=80,
+                deterministic=True,
+            )
+            tickets_repeat = self.generator.generate(
+                rule=rule,
+                draws=draws,
+                strategy=StrategyType.COMPOSITE,
+                count=5,
+                window=80,
+                deterministic=True,
             )
             self.assertEqual(len(tickets), 5)
+            self.assertEqual([t.numbers for t in tickets], [t.numbers for t in tickets_repeat])
+            self.assertEqual(
+                [t.score for t in tickets],
+                sorted([t.score for t in tickets], reverse=True),
+            )
             for tk in tickets:
                 rule.validate_numbers(tk.numbers)
 
@@ -107,6 +121,21 @@ class LotteryHelperTests(unittest.TestCase):
         app = QApplication.instance() or QApplication([])
         win = LotteryMainWindow()
         self.assertEqual(win.tabs.count(), 4)
+
+        rule = get_lottery_rule("ssq")
+        draws = MockSampleAdapter(seed=1).fetch("ssq", limit=30)
+        tickets = self.generator.generate(rule=rule, draws=draws, count=2, deterministic=True)
+        text = LotteryMainWindow.format_tickets_text(rule, tickets)
+        self.assertIn("红球:", text)
+        self.assertIn("蓝球:", text)
+        self.assertNotIn("评分", text)
+        self.assertNotIn("和值", text)
+
+        img = LotteryMainWindow.render_tickets_image(rule, tickets)
+        self.assertFalse(img.isNull())
+        self.assertGreater(img.width(), 0)
+        self.assertGreater(img.height(), 0)
+
         win.close()
         _ = app
 
