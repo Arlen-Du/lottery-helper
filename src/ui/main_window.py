@@ -33,12 +33,13 @@ from PyQt6.QtWidgets import (
 )
 
 from src.analysis.engine import AnalysisEngine
-from src.core.models import DrawRecord, LotteryRule, NumberStat, Ticket, ZoneRule
+from src.core.models import DrawRecord, LotteryRule, NumberStat, PurchaseRecord, Ticket, ZoneRule
 from src.core.registry import list_lottery_rules
 from src.data.adapters import AdapterManager, DataAdapterError
 from src.data.storage import SQLiteStorage
 from src.strategy.backtest import BacktestEngine
 from src.strategy.generator import FilterConfig, StrategyType, TicketGenerator
+from src.strategy.prize import infer_next_issue, settle_pending_purchases
 
 
 class NumericTableItem(QTableWidgetItem):
@@ -319,16 +320,19 @@ class LotteryMainWindow(QMainWindow):
         self.tab_data = QWidget()
         self.tab_analysis = QWidget()
         self.tab_generator = QWidget()
+        self.tab_purchase = QWidget()
         self.tab_backtest = QWidget()
 
         self.tabs.addTab(self.tab_data, "数据中心")
         self.tabs.addTab(self.tab_analysis, "概率与统计分析")
         self.tabs.addTab(self.tab_generator, "智能选号与评估")
+        self.tabs.addTab(self.tab_purchase, "模拟购彩与兑奖")
         self.tabs.addTab(self.tab_backtest, "策略回测")
 
         self._build_data_tab()
         self._build_analysis_tab()
         self._build_generator_tab()
+        self._build_purchase_tab()
         self._build_backtest_tab()
 
         # Status Bar
@@ -487,6 +491,10 @@ class LotteryMainWindow(QMainWindow):
         btn_copy_img.setObjectName("SecondaryBtn")
         btn_copy_img.clicked.connect(self._on_copy_tickets_image)
         cfg_layout.addWidget(btn_copy_img)
+
+        btn_buy_rec = QPushButton("模拟购买推荐")
+        btn_buy_rec.clicked.connect(self._on_buy_recommended)
+        cfg_layout.addWidget(btn_buy_rec)
         cfg_layout.addStretch()
 
         layout.addWidget(cfg_grp)
@@ -518,6 +526,11 @@ class LotteryMainWindow(QMainWindow):
         btn_eval.clicked.connect(self._on_evaluate_manual)
         e_row.addWidget(btn_eval)
 
+        btn_buy_manual = QPushButton("模拟购买此注")
+        btn_buy_manual.setObjectName("SecondaryBtn")
+        btn_buy_manual.clicked.connect(self._on_buy_manual)
+        e_row.addWidget(btn_buy_manual)
+
         self.manual_hint_lbl = QLabel("示例: 03 08 15 21 27 32 + 09")
         self.manual_hint_lbl.setStyleSheet("color: #666666;")
         e_row.addWidget(self.manual_hint_lbl)
@@ -532,7 +545,69 @@ class LotteryMainWindow(QMainWindow):
 
         layout.addWidget(eval_grp)
 
-    # ------------------------------------------------------------------ Tab 4: Backtest
+    # ------------------------------------------------------------------ Tab 4: Purchase & Prize
+    def _build_purchase_tab(self) -> None:
+        layout = QVBoxLayout(self.tab_purchase)
+
+        ctrl_grp = QGroupBox("模拟购买与开奖兑奖")
+        ctrl = QHBoxLayout(ctrl_grp)
+
+        ctrl.addWidget(QLabel("目标期号(下一期):"))
+        self.purchase_issue_edit = QLineEdit()
+        self.purchase_issue_edit.setFixedWidth(100)
+        ctrl.addWidget(self.purchase_issue_edit)
+
+        ctrl.addSpacing(10)
+        ctrl.addWidget(QLabel("投注倍数:"))
+        self.purchase_bet_spin = QSpinBox()
+        self.purchase_bet_spin.setRange(1, 99)
+        self.purchase_bet_spin.setValue(1)
+        ctrl.addWidget(self.purchase_bet_spin)
+
+        ctrl.addSpacing(12)
+        btn_settle = QPushButton("立即兑奖结算")
+        btn_settle.clicked.connect(self._on_settle_purchases)
+        ctrl.addWidget(btn_settle)
+
+        ctrl.addStretch()
+        btn_del_sel = QPushButton("删除选中记录")
+        btn_del_sel.setObjectName("SecondaryBtn")
+        btn_del_sel.clicked.connect(self._on_delete_selected_purchases)
+        ctrl.addWidget(btn_del_sel)
+
+        btn_clear_p = QPushButton("清空购彩记录")
+        btn_clear_p.setObjectName("DangerBtn")
+        btn_clear_p.clicked.connect(self._on_clear_purchases)
+        ctrl.addWidget(btn_clear_p)
+
+        layout.addWidget(ctrl_grp)
+
+        self.purchase_summary_lbl = QLabel("累计投入: ¥0  |  累计奖金: ¥0  |  净收益: ¥0  |  待开奖: 0 注")
+        self.purchase_summary_lbl.setStyleSheet(
+            "font-weight: bold; color: #1A73E8; padding: 6px 4px; background-color: #FFFFFF; "
+            "border: 1px solid #DCE1E8; border-radius: 5px;"
+        )
+        layout.addWidget(self.purchase_summary_lbl)
+
+        self.purchase_table = QTableWidget(0, 8)
+        self.purchase_table.setHorizontalHeaderLabels(
+            ["目标期号", "购买号码", "倍数", "花费(元)", "状态", "中奖等级", "奖金(元)", "当期开奖号码"]
+        )
+        self.purchase_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.purchase_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.purchase_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        p_header = self.purchase_table.horizontalHeader()
+        p_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        p_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        p_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        p_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        p_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        p_header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        p_header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        p_header.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.purchase_table, 1)
+
+    # ------------------------------------------------------------------ Tab 5: Backtest
     def _build_backtest_tab(self) -> None:
         layout = QVBoxLayout(self.tab_backtest)
 
@@ -625,7 +700,13 @@ class LotteryMainWindow(QMainWindow):
         self.zone_combo.addItems([z.label for z in self.current_rule.zones])
         self.zone_combo.blockSignals(False)
 
+        self.purchase_issue_edit.setText(infer_next_issue(self.current_draws))
+        settled, won = settle_pending_purchases(self.storage, self.current_rule, self.current_draws)
+        if settled > 0:
+            self.status_lbl.setText(f"已自动兑奖结算 {settled} 注，累计中奖 ¥{won:,}。")
+
         self._refresh_analysis_views()
+        self._refresh_purchase_view()
 
     def _refresh_analysis_views(self) -> None:
         window = self._get_window_size()
@@ -1006,6 +1087,167 @@ class LotteryMainWindow(QMainWindow):
         self.btn_backtest.setEnabled(True)
         self.status_lbl.setText("回测失败")
         QMessageBox.critical(self, "回测失败", err)
+
+    # ------------------------------------------------------------------ Purchase & Settlement Actions
+    def _save_simulated_purchases(self, numbers_list: List[Dict[str, List[int]]]) -> None:
+        target_issue = self.purchase_issue_edit.text().strip() or infer_next_issue(self.current_draws)
+        self.purchase_issue_edit.setText(target_issue)
+        bet_count = self.purchase_bet_spin.value()
+        cost = 2 * bet_count
+
+        records = [
+            PurchaseRecord(
+                lottery_code=self.current_rule.code,
+                target_issue=target_issue,
+                numbers=nums,
+                bet_count=bet_count,
+                cost=cost,
+            )
+            for nums in numbers_list
+        ]
+        self.storage.add_purchases(records)
+        # If target_issue is already in draws, settle immediately
+        settled, won = settle_pending_purchases(self.storage, self.current_rule, self.current_draws)
+        self._refresh_purchase_view()
+        if settled > 0:
+            QMessageBox.information(
+                self,
+                "模拟购买并已兑奖",
+                f"第 {target_issue} 期已有开奖数据，已自动结算 {settled} 注，中奖金额 ¥{won:,}！",
+            )
+        else:
+            self.status_lbl.setText(
+                f"已模拟购买 {len(records)} 注 {self.current_rule.name}（目标期号 {target_issue}，{bet_count} 倍，花费 ¥{cost * len(records)}）。"
+            )
+            QMessageBox.information(
+                self,
+                "模拟购买成功",
+                f"已记录 {len(records)} 注（目标期号 {target_issue}，花费 ¥{cost * len(records)}）。\n"
+                "下次开奖后，在「数据中心」同步或导入最新开奖数据即可自动计算是否中奖及奖金数额。",
+            )
+
+    def _on_buy_recommended(self) -> None:
+        if not self.last_tickets:
+            QMessageBox.information(self, "无推荐号码", "请先点击「生成推荐号码」。")
+            return
+        self._save_simulated_purchases([t.numbers for t in self.last_tickets])
+
+    def _on_buy_manual(self) -> None:
+        raw = self.manual_input_edit.text().strip()
+        if not raw:
+            QMessageBox.warning(self, "输入为空", "请先输入要购买的号码。")
+            return
+        try:
+            numbers = self._parse_manual_input(raw)
+            self.current_rule.validate_numbers(numbers)
+        except Exception as exc:
+            QMessageBox.critical(self, "号码格式或规则错误", str(exc))
+            return
+        self._save_simulated_purchases([numbers])
+
+    def _on_settle_purchases(self) -> None:
+        settled, won = settle_pending_purchases(self.storage, self.current_rule, self.current_draws)
+        self._refresh_purchase_view()
+        if settled == 0:
+            QMessageBox.information(
+                self,
+                "暂无可兑奖记录",
+                "当前待开奖记录的目标期号尚未开奖或未同步到本地。\n"
+                "请在下次开奖后前往「数据中心」同步或导入最新开奖数据。",
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "兑奖结算完成",
+                f"本次共结算 {settled} 注，合计中奖金额：¥{won:,}。",
+            )
+
+    def _on_delete_selected_purchases(self) -> None:
+        selected_rows = sorted({idx.row() for idx in self.purchase_table.selectedIndexes()})
+        if not selected_rows:
+            QMessageBox.information(self, "未选择记录", "请先在表格中选择要删除的记录（支持按住 Command/Shift 多选）。")
+            return
+        ids: List[int] = []
+        for r in selected_rows:
+            item = self.purchase_table.item(r, 0)
+            if item is not None:
+                pid = item.data(Qt.ItemDataRole.UserRole)
+                if pid is not None:
+                    ids.append(int(pid))
+        if not ids:
+            return
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            f"确定要删除选中的 {len(ids)} 条模拟购彩记录吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        deleted = self.storage.delete_purchases(ids)
+        self.status_lbl.setText(f"已删除 {deleted} 条模拟购彩记录。")
+        self._refresh_purchase_view()
+
+    def _on_clear_purchases(self) -> None:
+        reply = QMessageBox.question(
+            self,
+            "确认清空",
+            f"确定要清空 {self.current_rule.name} 的所有模拟购彩记录吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        deleted = self.storage.clear_purchases(self.current_rule.code)
+        self.status_lbl.setText(f"已清空 {deleted} 条模拟购彩记录。")
+        self._refresh_purchase_view()
+
+    def _refresh_purchase_view(self) -> None:
+        purchases = self.storage.get_purchases(self.current_rule.code)
+        self.purchase_table.setRowCount(len(purchases))
+
+        total_cost = 0
+        total_prize = 0
+        pending_cnt = 0
+
+        for row_idx, p in enumerate(purchases):
+            total_cost += p.cost
+            total_prize += p.prize_amount
+            if p.status == "pending":
+                pending_cnt += 1
+
+            status_text = "待开奖" if p.status == "pending" else "已兑奖"
+            draw_disp = "-"
+            if p.draw_numbers:
+                draw_parts = [
+                    " ".join(z.format_num(n) for n in p.draw_numbers.get(z.key, []))
+                    for z in self.current_rule.zones
+                ]
+                draw_disp = " | ".join(draw_parts)
+
+            issue_item = QTableWidgetItem(p.target_issue)
+            issue_item.setData(Qt.ItemDataRole.UserRole, p.id)
+            items = [
+                issue_item,
+                QTableWidgetItem(p.format_display(self.current_rule)),
+                QTableWidgetItem(f"{p.bet_count} 倍"),
+                QTableWidgetItem(f"¥{p.cost}"),
+                QTableWidgetItem(status_text),
+                QTableWidgetItem(p.prize_tier or "-"),
+                QTableWidgetItem(f"¥{p.prize_amount:,}" if p.status == "settled" else "-"),
+                QTableWidgetItem(draw_disp),
+            ]
+            for col_idx, it in enumerate(items):
+                if col_idx not in (1, 7):
+                    it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if col_idx in (5, 6) and p.prize_amount > 0:
+                    it.setForeground(QColor("#D93025"))
+                self.purchase_table.setItem(row_idx, col_idx, it)
+
+        net = total_prize - total_cost
+        sign = "+" if net > 0 else ""
+        self.purchase_summary_lbl.setText(
+            f"累计投入: ¥{total_cost:,}  |  累计奖金: ¥{total_prize:,}  |  净收益: {sign}¥{net:,}  |  待开奖: {pending_cnt} 注"
+        )
 
 
 def run_app() -> None:

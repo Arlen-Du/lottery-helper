@@ -6,9 +6,9 @@ import json
 import sqlite3
 import threading
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-from src.core.models import DrawRecord
+from src.core.models import DrawRecord, PurchaseRecord
 
 
 class SQLiteStorage:
@@ -42,6 +42,23 @@ class SQLiteStorage:
                 """
                 CREATE INDEX IF NOT EXISTS idx_draws_code_issue
                 ON draws (lottery_code, issue DESC)
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS purchases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lottery_code TEXT NOT NULL,
+                    target_issue TEXT NOT NULL,
+                    numbers_json TEXT NOT NULL,
+                    bet_count INTEGER NOT NULL DEFAULT 1,
+                    cost INTEGER NOT NULL DEFAULT 2,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    prize_tier TEXT NOT NULL DEFAULT '',
+                    prize_amount INTEGER NOT NULL DEFAULT 0,
+                    draw_numbers_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
                 """
             )
             conn.commit()
@@ -114,6 +131,111 @@ class SQLiteStorage:
         with self._lock, self._connect() as conn:
             cursor = conn.execute(
                 "DELETE FROM draws WHERE lottery_code = ?",
+                (lottery_code,),
+            )
+            conn.commit()
+            return cursor.rowcount
+
+    def add_purchases(self, records: List[PurchaseRecord]) -> int:
+        if not records:
+            return 0
+        rows = [
+            (
+                r.lottery_code,
+                r.target_issue,
+                json.dumps(r.numbers, ensure_ascii=False),
+                r.bet_count,
+                r.cost,
+                r.status,
+                r.prize_tier,
+                r.prize_amount,
+                json.dumps(r.draw_numbers, ensure_ascii=False),
+            )
+            for r in records
+        ]
+        with self._lock, self._connect() as conn:
+            cursor = conn.executemany(
+                """
+                INSERT INTO purchases (
+                    lottery_code, target_issue, numbers_json, bet_count, cost,
+                    status, prize_tier, prize_amount, draw_numbers_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            conn.commit()
+            return cursor.rowcount
+
+    def get_purchases(self, lottery_code: Optional[str] = None) -> List[PurchaseRecord]:
+        sql = """
+            SELECT id, lottery_code, target_issue, numbers_json, bet_count, cost,
+                   status, prize_tier, prize_amount, draw_numbers_json, created_at
+            FROM purchases
+        """
+        params: list = []
+        if lottery_code:
+            sql += " WHERE lottery_code = ?"
+            params.append(lottery_code)
+        sql += " ORDER BY id DESC"
+
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+
+        return [
+            PurchaseRecord(
+                id=row[0],
+                lottery_code=row[1],
+                target_issue=row[2],
+                numbers=json.loads(row[3]),
+                bet_count=row[4],
+                cost=row[5],
+                status=row[6],
+                prize_tier=row[7],
+                prize_amount=row[8],
+                draw_numbers=json.loads(row[9]) if row[9] else {},
+                created_at=str(row[10] or ""),
+            )
+            for row in rows
+        ]
+
+    def update_purchase_settlement(
+        self,
+        purchase_id: int,
+        prize_tier: str,
+        prize_amount: int,
+        draw_numbers: Dict[str, List[int]],
+    ) -> None:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE purchases
+                SET status = 'settled',
+                    prize_tier = ?,
+                    prize_amount = ?,
+                    draw_numbers_json = ?
+                WHERE id = ?
+                """,
+                (prize_tier, prize_amount, json.dumps(draw_numbers, ensure_ascii=False), purchase_id),
+            )
+            conn.commit()
+
+    def delete_purchases(self, purchase_ids: List[int]) -> int:
+        if not purchase_ids:
+            return 0
+        placeholders = ",".join("?" for _ in purchase_ids)
+        with self._lock, self._connect() as conn:
+            cursor = conn.execute(
+                f"DELETE FROM purchases WHERE id IN ({placeholders})",
+                purchase_ids,
+            )
+            conn.commit()
+            return cursor.rowcount
+
+    def clear_purchases(self, lottery_code: str) -> int:
+        with self._lock, self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM purchases WHERE lottery_code = ?",
                 (lottery_code,),
             )
             conn.commit()

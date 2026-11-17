@@ -117,3 +117,26 @@ class Ticket(BaseModel):
             nums = self.numbers.get(z.key, [])
             parts.append(" ".join(z.format_num(n) for n in nums))
         return " + ".join(parts)
+
+
+class PurchaseRecord(BaseModel):
+    """Represents a simulated lottery ticket purchase and its settlement result."""
+
+    id: Optional[int] = None
+    lottery_code: str
+    target_issue: str
+    numbers: Dict[str, List[int]]
+    bet_count: int = 1
+    cost: int = 2
+    status: str = "pending"  # 'pending' | 'settled'
+    prize_tier: str = ""
+    prize_amount: int = 0
+    draw_numbers: Dict[str, List[int]] = Field(default_factory=dict)
+    created_at: str = ""
+
+    def format_display(self, rule: LotteryRule) -> str:
+        parts = []
+        for z in rule.zones:
+            nums = self.numbers.get(z.key, [])
+            parts.append(" ".join(z.format_num(n) for n in nums))
+        return " | ".join(parts)

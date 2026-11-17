@@ -10,11 +10,13 @@ from pathlib import Path
 import pandas as pd
 
 from src.analysis.engine import AnalysisEngine
+from src.core.models import DrawRecord, PurchaseRecord
 from src.core.registry import get_lottery_rule
 from src.data.adapters import CsvExcelAdapter, MockSampleAdapter
 from src.data.storage import SQLiteStorage
 from src.strategy.backtest import BacktestEngine
 from src.strategy.generator import FilterConfig, StrategyType, TicketGenerator
+from src.strategy.prize import evaluate_prize, settle_pending_purchases
 
 
 class LotteryHelperTests(unittest.TestCase):
@@ -120,7 +122,7 @@ class LotteryHelperTests(unittest.TestCase):
 
         app = QApplication.instance() or QApplication([])
         win = LotteryMainWindow()
-        self.assertEqual(win.tabs.count(), 4)
+        self.assertEqual(win.tabs.count(), 5)
 
         rule = get_lottery_rule("ssq")
         draws = MockSampleAdapter(seed=1).fetch("ssq", limit=30)
@@ -138,6 +140,90 @@ class LotteryHelperTests(unittest.TestCase):
 
         win.close()
         _ = app
+
+    def test_simulated_purchase_and_prize_settlement(self) -> None:
+        ssq = get_lottery_rule("ssq")
+        tier, amt = evaluate_prize(
+            ssq,
+            {"red": [1, 2, 3, 4, 10, 11], "blue": [5]},
+            {"red": [1, 2, 3, 4, 20, 21], "blue": [5]},
+            bet_count=2,
+        )
+        self.assertEqual(tier, "四等奖")
+        self.assertEqual(amt, 400)
+
+        dlt = get_lottery_rule("dlt")
+        tier_dlt, amt_dlt = evaluate_prize(
+            dlt,
+            {"front": [1, 2, 3, 10, 11], "back": [1, 2]},
+            {"front": [1, 2, 3, 20, 21], "back": [1, 2]},
+            bet_count=1,
+        )
+        self.assertEqual(tier_dlt, "六等奖")
+        self.assertEqual(amt_dlt, 200)
+
+        fc3d = get_lottery_rule("fc3d")
+        tier_3d, amt_3d = evaluate_prize(
+            fc3d,
+            {"hundreds": [3], "tens": [5], "units": [8]},
+            {"hundreds": [3], "tens": [5], "units": [8]},
+            bet_count=3,
+        )
+        self.assertEqual(tier_3d, "直选一等奖")
+        self.assertEqual(amt_3d, 3120)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = SQLiteStorage(Path(tmpdir) / "purchase.db")
+            storage.add_purchases(
+                [
+                    PurchaseRecord(
+                        lottery_code="ssq",
+                        target_issue="2026121",
+                        numbers={"red": [1, 2, 3, 4, 10, 11], "blue": [5]},
+                        bet_count=2,
+                        cost=4,
+                    )
+                ]
+            )
+            draw = DrawRecord(
+                lottery_code="ssq",
+                issue="2026121",
+                draw_date="2026-11-17",
+                numbers={"red": [1, 2, 3, 4, 20, 21], "blue": [5]},
+            )
+            settled, won = settle_pending_purchases(storage, ssq, [draw])
+            self.assertEqual(settled, 1)
+            self.assertEqual(won, 400)
+            loaded = storage.get_purchases("ssq")
+            self.assertEqual(loaded[0].status, "settled")
+            self.assertEqual(loaded[0].prize_tier, "四等奖")
+            self.assertEqual(loaded[0].prize_amount, 400)
+
+            # Test single & multi-record deletion
+            storage.add_purchases(
+                [
+                    PurchaseRecord(
+                        lottery_code="ssq",
+                        target_issue="2026122",
+                        numbers={"red": [1, 2, 3, 4, 5, 6], "blue": [7]},
+                        bet_count=1,
+                        cost=2,
+                    ),
+                    PurchaseRecord(
+                        lottery_code="ssq",
+                        target_issue="2026123",
+                        numbers={"red": [2, 3, 4, 5, 6, 7], "blue": [8]},
+                        bet_count=1,
+                        cost=2,
+                    ),
+                ]
+            )
+            all_p = storage.get_purchases("ssq")
+            self.assertEqual(len(all_p), 3)
+            # Delete two records
+            deleted = storage.delete_purchases([all_p[0].id, all_p[1].id])
+            self.assertEqual(deleted, 2)
+            self.assertEqual(len(storage.get_purchases("ssq")), 1)
 
 
 if __name__ == "__main__":
