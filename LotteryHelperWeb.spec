@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for building the standalone Linux x86_64 fnOS native server binary."""
+"""PyInstaller onedir spec for building the standalone Linux x86_64 fnOS native server."""
 
 a = Analysis(
     ["web_main.py"],
@@ -41,13 +41,21 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="lottery-helper-server",
     debug=False,
     bootloader_ignore_signals=False,
     strip=True,
     upx=False,
     console=True,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=True,
+    upx=False,
+    name="lottery-helper-server",
 )

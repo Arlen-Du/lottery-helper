@@ -23,11 +23,35 @@ cd "${ROOT_DIR}"
 echo "==> 1. Building standalone Linux x86_64 server binary with PyInstaller..."
 python3 -m PyInstaller --noconfirm --clean LotteryHelperWeb.spec
 
-echo "==> 2. Staging binary into fnOS package layout..."
+echo "==> 2. Staging onedir server bundle into fnOS package layout..."
+rm -rf "${PKG_DIR}/app/server"
 mkdir -p "${PKG_DIR}/app/server" "${OUT_DIR}"
-cp -f "${ROOT_DIR}/dist/lottery-helper-server" "${PKG_DIR}/app/server/lottery-helper-server"
+cp -a "${ROOT_DIR}/dist/lottery-helper-server/." "${PKG_DIR}/app/server/"
 chmod +x "${PKG_DIR}/app/server/lottery-helper-server"
 chmod +x "${PKG_DIR}/cmd/"*
+
+echo "==> 2.5. Smoke-testing compiled binary..."
+SMOKE_DB="$(mktemp -u /tmp/lottery_smoke_XXXX.db)"
+LOTTERY_HOST="127.0.0.1" LOTTERY_PORT="18689" LOTTERY_DB_PATH="${SMOKE_DB}" LOTTERY_DISABLE_SCHEDULER="1" \
+    "${PKG_DIR}/app/server/lottery-helper-server" >/tmp/lottery_smoke.log 2>&1 &
+SMOKE_PID=$!
+SMOKE_OK=0
+for _ in $(seq 1 20); do
+    if curl -fsS "http://127.0.0.1:18689/api/health" >/dev/null 2>&1; then
+        SMOKE_OK=1
+        break
+    fi
+    sleep 0.5
+done
+kill "${SMOKE_PID}" 2>/dev/null || true
+wait "${SMOKE_PID}" 2>/dev/null || true
+rm -f "${SMOKE_DB}"
+if [[ "${SMOKE_OK}" != "1" ]]; then
+    echo "ERROR: Compiled server failed smoke test!"
+    cat /tmp/lottery_smoke.log || true
+    exit 1
+fi
+echo "==> Smoke test passed!"
 
 if ! command -v fnpack >/dev/null 2>&1 && [[ ! -x "${FNPACK_BIN}" ]]; then
     echo "==> 3. Downloading official fnpack (${FNPACK_VERSION}) for linux-amd64..."

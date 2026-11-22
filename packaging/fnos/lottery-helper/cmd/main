@@ -5,16 +5,18 @@ set -euo pipefail
 #   TRIM_APPDEST - Application installation directory (read-only)
 #   TRIM_PKGVAR  - Application persistent data directory
 
-APP_BIN="${TRIM_APPDEST}/server/lottery-helper-server"
+APP_DIR="${TRIM_APPDEST}/server"
+APP_BIN="${APP_DIR}/lottery-helper-server"
 DATA_DIR="${TRIM_PKGVAR:-/tmp/lottery-helper}"
 PID_FILE="${DATA_DIR}/lottery-helper.pid"
-LOG_FILE="${DATA_DIR}/lottery-helper.log"
+LOG_FILE="${DATA_DIR}/info.log"
 
 export LOTTERY_HOST="${LOTTERY_HOST:-0.0.0.0}"
 export LOTTERY_PORT="${LOTTERY_PORT:-18680}"
 export LOTTERY_DB_PATH="${DATA_DIR}/lottery.db"
+export TMPDIR="${DATA_DIR}/tmp"
 
-mkdir -p "${DATA_DIR}"
+mkdir -p "${DATA_DIR}" "${TMPDIR}"
 
 is_running() {
     if [ -f "${PID_FILE}" ]; then
@@ -37,6 +39,7 @@ start_app() {
         return 1
     fi
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting lottery-helper on ${LOTTERY_HOST}:${LOTTERY_PORT}..." >> "${LOG_FILE}"
+    cd "${APP_DIR}"
     nohup "${APP_BIN}" >> "${LOG_FILE}" 2>&1 &
     local pid=$!
     echo "${pid}" > "${PID_FILE}"
