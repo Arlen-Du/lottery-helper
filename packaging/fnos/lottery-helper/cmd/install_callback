@@ -1,0 +1,3 @@
+#!/bin/bash
+### Called after the user installs the application.
+exit 0

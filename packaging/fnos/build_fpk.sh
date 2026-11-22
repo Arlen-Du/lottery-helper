@@ -27,7 +27,7 @@ echo "==> 2. Staging binary into fnOS package layout..."
 mkdir -p "${PKG_DIR}/app/server" "${OUT_DIR}"
 cp -f "${ROOT_DIR}/dist/lottery-helper-server" "${PKG_DIR}/app/server/lottery-helper-server"
 chmod +x "${PKG_DIR}/app/server/lottery-helper-server"
-chmod +x "${PKG_DIR}/cmd/main"
+chmod +x "${PKG_DIR}/cmd/"*
 
 if ! command -v fnpack >/dev/null 2>&1 && [[ ! -x "${FNPACK_BIN}" ]]; then
     echo "==> 3. Downloading official fnpack (${FNPACK_VERSION}) for linux-amd64..."
@@ -42,11 +42,13 @@ echo "==> 4. Building .fpk package with ${FNPACK_CMD}..."
 "${FNPACK_CMD}" build --directory "${PKG_DIR}"
 
 BUILT_FPK="$(ls -t "${PKG_DIR}".fpk "${ROOT_DIR}"/lottery-helper*.fpk "${PKG_DIR}"/../lottery-helper*.fpk 2>/dev/null | head -n 1 || true)"
-if [[ -n "${BUILT_FPK}" ]]; then
-    VERSION="$(grep '^version=' "${PKG_DIR}/manifest" | cut -d= -f2)"
-    FINAL_FPK="${OUT_DIR}/lottery-helper-${VERSION}-x86_64.fpk"
-    mv -f "${BUILT_FPK}" "${FINAL_FPK}"
-    echo "==> Done! Native fnOS package created at: ${FINAL_FPK}"
-else
-    echo "==> fnpack build finished; check current directory for generated .fpk file."
+if [[ -z "${BUILT_FPK}" ]]; then
+    echo "ERROR: fnpack did not produce a .fpk file!"
+    exit 1
 fi
+
+VERSION="$(grep '^version=' "${PKG_DIR}/manifest" | cut -d= -f2)"
+FINAL_FPK="${OUT_DIR}/lottery-helper-${VERSION}-x86_64.fpk"
+mv -f "${BUILT_FPK}" "${FINAL_FPK}"
+echo "==> Done! Native fnOS package created at: ${FINAL_FPK}"
+ls -lh "${FINAL_FPK}"

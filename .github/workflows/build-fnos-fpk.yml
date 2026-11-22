@@ -39,3 +39,4 @@ jobs:
         with:
           name: lottery-helper-fnos-x86_64
           path: dist/*.fpk
+          if-no-files-found: error

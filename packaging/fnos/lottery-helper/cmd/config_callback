@@ -1,0 +1,3 @@
+#!/bin/bash
+### Called after the user changes application configuration.
+exit 0
