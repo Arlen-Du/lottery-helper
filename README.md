@@ -100,3 +100,37 @@ python3 -m PyInstaller --noconfirm LotteryHelper.spec
 ```bash
 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
 ```
+
+---
+
+## 飞牛 fnOS 原生应用（x86_64 `.fpk`，无 Docker）
+
+本项目已内置 **Web 版后端（FastAPI）+ 响应式前端 + NAS 后台定时自动同步与兑奖引擎**，并包含完整的 fnOS 原生 `.fpk` 打包配置，原有 PyQt6 桌面端保持完全兼容。
+
+### 1. 本地预览 Web / fnOS 界面
+
+```bash
+pip3 install -r requirements-web.txt
+python3 web_main.py
+```
+
+启动后访问 `http://127.0.0.1:18680`（可通过环境变量 `LOTTERY_PORT`、`LOTTERY_DB_PATH` 自定义端口和 SQLite 数据库路径）。
+
+### 2. 构建 x86_64 原生 `.fpk` 安装包
+
+由于 `.fpk` 内置的是独立运行的 Linux `x86_64` 原生可执行文件（不依赖宿主机 Python 或 Docker），请在 **Linux x86_64 环境**（飞牛 NAS SSH、Linux 虚拟机或 GitHub Actions）中构建：
+
+- **方式一：GitHub Actions 一键构建（推荐，macOS/Windows 开发者无需本地 Linux）**
+  - 仓库已内置 [.github/workflows/build-fnos-fpk.yml](.github/workflows/build-fnos-fpk.yml)，在 GitHub Actions 中手动触发 `Build fnOS Native FPK (x86_64)` 或推送 `v*` 标签，即可直接下载 `lottery-helper-1.0.0-x86_64.fpk`。
+- **方式二：在 Linux x86_64 宿主机本地构建**
+  ```bash
+  pip3 install -r requirements-web.txt pyinstaller
+  ./packaging/fnos/build_fpk.sh
+  ```
+  构建产物输出在 `dist/lottery-helper-1.0.0-x86_64.fpk`。
+
+### 3. 安装到飞牛 fnOS
+
+1. 登录飞牛 fnOS → 打开 **应用中心** → 点击 **手动安装**，上传生成的 `.fpk` 文件。
+2. 安装完成后应用数据持久化存储于 `${TRIM_PKGVAR}/lottery.db`，默认监听端口 `18680`。
+3. 点击 fnOS 桌面图标「彩票选号与分析助手」即可在内置窗口打开使用，并在「定时同步」页签中管理后台自动同步与自动兑奖周期。

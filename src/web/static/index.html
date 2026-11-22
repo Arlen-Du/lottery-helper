@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>彩票选号与历史数据分析助手 · fnOS</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-icon">彩</div>
+        <div>
+          <h1>彩票选号与历史数据分析助手</h1>
+          <p class="subtitle">fnOS 原生 NAS 版 · 数据分析与娱乐参考，请理性购彩</p>
+        </div>
+      </div>
+      <div class="topbar-controls">
+        <div class="lottery-tabs" id="lotterySelector"></div>
+        <span class="badge" id="drawCountBadge">已存 0 期</span>
+        <button class="btn btn-primary btn-sm" id="quickSyncBtn">立即同步</button>
+      </div>
+    </header>
+
+    <nav class="nav-tabs" id="navTabs">
+      <button class="nav-tab active" data-tab="data">数据中心</button>
+      <button class="nav-tab" data-tab="analysis">概率统计</button>
+      <button class="nav-tab" data-tab="generate">智能选号</button>
+      <button class="nav-tab" data-tab="purchases">模拟购彩</button>
+      <button class="nav-tab" data-tab="backtest">历史回测</button>
+      <button class="nav-tab" data-tab="scheduler">定时同步</button>
+    </nav>
+
+    <main class="content">
+      <!-- Tab 1: Data Center -->
+      <section class="panel active" id="panel-data">
+        <div class="card">
+          <div class="card-header">
+            <h2>历史开奖数据管理</h2>
+            <div class="toolbar">
+              <label class="inline-field">
+                期数
+                <input type="number" id="syncLimitInput" value="100" min="10" max="500" />
+              </label>
+              <button class="btn btn-primary" id="btnSyncOnline">在线同步最新开奖</button>
+              <button class="btn btn-secondary" id="btnGenerateMock">生成离线模拟数据</button>
+              <label class="btn btn-secondary file-btn">
+                导入 CSV / Excel
+                <input type="file" id="importFileInput" accept=".csv,.xlsx,.xls" hidden />
+              </label>
+              <button class="btn btn-danger" id="btnClearDraws">清空当前彩种</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 140px;">期号</th>
+                  <th style="width: 140px;">开奖日期</th>
+                  <th>开奖号码</th>
+                </tr>
+              </thead>
+              <tbody id="drawsTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab 2: Statistical Analysis -->
+      <section class="panel" id="panel-analysis">
+        <div class="card">
+          <div class="card-header">
+            <h2>频次分布与形态统计</h2>
+            <div class="toolbar">
+              <label class="inline-field">
+                统计窗口
+                <select id="analysisWindowSelect">
+                  <option value="30">近 30 期</option>
+                  <option value="50">近 50 期</option>
+                  <option value="100" selected>近 100 期</option>
+                  <option value="200">近 200 期</option>
+                  <option value="0">全部历史</option>
+                </select>
+              </label>
+              <label class="inline-field">
+                查看分区
+                <select id="analysisZoneSelect"></select>
+              </label>
+            </div>
+          </div>
+
+          <div class="metrics-grid" id="patternCards"></div>
+
+          <div class="chart-box">
+            <canvas id="freqChartCanvas" height="260"></canvas>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>号码</th>
+                  <th>出现频次</th>
+                  <th>经验概率</th>
+                  <th>理论概率</th>
+                  <th>当前遗漏</th>
+                  <th>平均遗漏</th>
+                  <th>最大遗漏</th>
+                  <th>欲出度</th>
+                  <th>综合评分</th>
+                </tr>
+              </thead>
+              <tbody id="statsTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab 3: Ticket Generator & Evaluator -->
+      <section class="panel" id="panel-generate">
+        <div class="two-col">
+          <div class="card">
+            <div class="card-header">
+              <h2>智能选号引擎</h2>
+            </div>
+            <div class="form-grid">
+              <label>
+                选号模式
+                <select id="genModeSelect">
+                  <option value="deterministic" selected>确定性 Top-N 排序推荐</option>
+                  <option value="random">加权随机采样</option>
+                </select>
+              </label>
+              <label>
+                权重策略
+                <select id="genStrategySelect">
+                  <option value="composite">综合评分（频率+遗漏）</option>
+                  <option value="balanced">均衡随机（理论回归）</option>
+                  <option value="hot">追热选号（高频优先）</option>
+                  <option value="cold_rebound">防冷回补（高遗漏优先）</option>
+                </select>
+              </label>
+              <label>
+                生成注数
+                <input type="number" id="genCountInput" value="5" min="1" max="20" />
+              </label>
+              <label>
+                参考窗口（0=全部）
+                <input type="number" id="genWindowInput" value="100" min="0" max="1000" />
+              </label>
+              <label>
+                和值下限（可选）
+                <input type="number" id="genSumMinInput" placeholder="不限" />
+              </label>
+              <label>
+                和值上限（可选）
+                <input type="number" id="genSumMaxInput" placeholder="不限" />
+              </label>
+            </div>
+            <div class="toolbar mt-12">
+              <button class="btn btn-primary" id="btnGenerateTickets">生成推荐号码</button>
+              <button class="btn btn-secondary" id="btnCopyText">复制文字</button>
+              <button class="btn btn-secondary" id="btnDownloadImg">导出号码图片</button>
+              <button class="btn btn-success" id="btnBuyAllGenerated">全部记入模拟购彩</button>
+            </div>
+            <div id="generatedTicketsList" class="ticket-list mt-12"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2>自选号码评估</h2>
+            </div>
+            <div id="customEvalInputs" class="form-stack"></div>
+            <div class="toolbar mt-12">
+              <button class="btn btn-primary" id="btnEvaluateCustom">评估自选号码</button>
+              <button class="btn btn-success" id="btnBuyCustom">记入模拟购彩</button>
+            </div>
+            <div id="customEvalResult" class="eval-result mt-12"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab 4: Simulated Purchases -->
+      <section class="panel" id="panel-purchases">
+        <div class="card">
+          <div class="card-header">
+            <h2>模拟购彩与自动兑奖</h2>
+            <div class="toolbar">
+              <label class="inline-field">
+                目标期号
+                <input type="text" id="purchaseIssueInput" style="width: 110px;" />
+              </label>
+              <label class="inline-field">
+                倍数
+                <input type="number" id="purchaseBetCountInput" value="1" min="1" max="99" style="width: 72px;" />
+              </label>
+              <button class="btn btn-primary" id="btnSettleNow">立即核对开奖</button>
+              <button class="btn btn-danger" id="btnDeleteSelectedPurchases">删除选中记录</button>
+            </div>
+          </div>
+
+          <div class="metrics-grid" id="purchaseMetrics"></div>
+
+          <div class="table-wrap mt-12">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 38px;"><input type="checkbox" id="selectAllPurchases" /></th>
+                  <th>期号</th>
+                  <th>投注号码</th>
+                  <th>倍数 / 成本</th>
+                  <th>状态</th>
+                  <th>奖级 / 奖金</th>
+                  <th>开奖号码</th>
+                </tr>
+              </thead>
+              <tbody id="purchasesTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab 5: Backtest -->
+      <section class="panel" id="panel-backtest">
+        <div class="card">
+          <div class="card-header">
+            <h2>历史滚动回测</h2>
+            <div class="toolbar">
+              <label class="inline-field">
+                策略
+                <select id="btStrategySelect">
+                  <option value="composite">综合评分</option>
+                  <option value="balanced">均衡随机</option>
+                  <option value="hot">追热选号</option>
+                  <option value="cold_rebound">防冷回补</option>
+                </select>
+              </label>
+              <label class="inline-field">
+                训练窗口
+                <input type="number" id="btTrainInput" value="50" min="10" max="300" style="width: 80px;" />
+              </label>
+              <label class="inline-field">
+                测试期数
+                <input type="number" id="btTestInput" value="20" min="5" max="100" style="width: 80px;" />
+              </label>
+              <label class="inline-field">
+                每期注数
+                <input type="number" id="btTicketsInput" value="5" min="1" max="20" style="width: 72px;" />
+              </label>
+              <button class="btn btn-primary" id="btnRunBacktest">开始回测</button>
+            </div>
+          </div>
+          <div id="backtestResult" class="mt-12"></div>
+        </div>
+      </section>
+
+      <!-- Tab 6: NAS Background Auto-Sync Scheduler -->
+      <section class="panel" id="panel-scheduler">
+        <div class="card">
+          <div class="card-header">
+            <h2>NAS 后台定时自动同步与兑奖</h2>
+            <div class="toolbar">
+              <button class="btn btn-primary" id="btnRunSchedulerNow">立即同步全部彩种并兑奖</button>
+            </div>
+          </div>
+          <div class="form-grid">
+            <label class="checkbox-label">
+              <input type="checkbox" id="schedEnabledInput" />
+              启用后台定时自动同步
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="schedAutoSettleInput" />
+              同步完成后自动核对模拟购彩兑奖
+            </label>
+            <label>
+              同步周期
+              <select id="schedIntervalSelect">
+                <option value="60">每 1 小时</option>
+                <option value="180">每 3 小时</option>
+                <option value="360">每 6 小时（推荐）</option>
+                <option value="720">每 12 小时</option>
+                <option value="1440">每 24 小时</option>
+              </select>
+            </label>
+            <label>
+              每次同步期数
+              <input type="number" id="schedLimitInput" value="30" min="10" max="300" />
+            </label>
+          </div>
+          <div class="toolbar mt-12">
+            <button class="btn btn-success" id="btnSaveScheduler">保存定时配置</button>
+          </div>
+
+          <div class="scheduler-status mt-16" id="schedulerStatusBox"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

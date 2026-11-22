@@ -1,0 +1,16 @@
+appname=lottery-helper
+version=1.0.0
+display_name=彩票选号与分析助手
+desc=多彩种历史开奖数据分析、智能选号、模拟购彩与定时自动兑奖工具（双色球/大乐透/福彩3D）
+arch=x86_64
+platform=x86
+source=thirdparty
+maintainer=lottery-helper
+maintainer_url=https://github.com/
+distributor=lottery-helper
+os_min_version=0.9.0
+ctl_stop=true
+desktop_uidir=ui
+desktop_applaunchname=lottery-helper.Application
+service_port=18680
+checkport=true

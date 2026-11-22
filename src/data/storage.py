@@ -3,20 +3,25 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from src.core.models import DrawRecord, PurchaseRecord
 
 
 class SQLiteStorage:
-    """Thread-safe SQLite storage for DrawRecord objects."""
+    """Thread-safe SQLite storage for DrawRecord, PurchaseRecord, and app settings."""
 
     def __init__(self, db_path: Optional[str | Path] = None) -> None:
         if db_path is None:
-            self.db_path = Path.home() / ".lottery-helper" / "lottery.db"
+            env_path = os.environ.get("LOTTERY_DB_PATH", "").strip()
+            if env_path:
+                self.db_path = Path(env_path)
+            else:
+                self.db_path = Path.home() / ".lottery-helper" / "lottery.db"
         else:
             self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -61,6 +66,15 @@ class SQLiteStorage:
                     prize_amount INTEGER NOT NULL DEFAULT 0,
                     draw_numbers_json TEXT NOT NULL DEFAULT '{}',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value_json TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )
@@ -243,3 +257,31 @@ class SQLiteStorage:
             )
             conn.commit()
             return cursor.rowcount
+
+    def get_setting(self, key: str, default: Any = None) -> Any:
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT value_json FROM settings WHERE key = ?",
+                (key,),
+            ).fetchone()
+        if row is None:
+            return default
+        try:
+            return json.loads(row[0])
+        except (ValueError, TypeError):
+            return default
+
+    def set_setting(self, key: str, value: Any) -> None:
+        encoded = json.dumps(value, ensure_ascii=False)
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO settings (key, value_json, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET
+                    value_json = excluded.value_json,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (key, encoded),
+            )
+            conn.commit()

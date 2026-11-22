@@ -1,0 +1,13 @@
+{
+  ".url": {
+    "lottery-helper.Application": {
+      "title": "彩票选号与分析助手",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "http",
+      "port": "18680",
+      "url": "/",
+      "allUsers": true
+    }
+  }
+}
